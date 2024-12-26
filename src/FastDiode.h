@@ -35,6 +35,7 @@ private:
   Diode notifyLED; // 用于发送状态的缓存
   Diode saveLED;   // 用于存储 前一个状态的缓存
   String name;
+  bool edge; // flase 拉低点亮.   ture 拉高点亮
 
   // 处理任务
   void task();
@@ -46,9 +47,10 @@ private:
   static void startTaskImpl(void *_this) { static_cast<FastDiode *>(_this)->task(); }
 
 public:
-  FastDiode(uint8_t _pin, String _name = " ")
+  FastDiode(uint8_t _pin, bool _edge = false, String _name = " ")
   {
     pin = _pin;
+    edge = _edge;
     name = _name;
     pinMode(pin, OUTPUT);
     xTaskCreate(this->startTaskImpl, "waitTask", 1024 * 2, this, 1, &taskHandle);
@@ -56,9 +58,22 @@ public:
   }
 
   /// @brief 开灯
-  void open() { sendNotify(STATE_BRIGHT, 255, 0, 0, 0); }
+  void open()
+  {
+    if (!edge)
+      sendNotify(STATE_BRIGHT, 255, 0, 0, 0);
+    else
+      sendNotify(STATE_BRIGHT, 0, 0, 0, 0);
+  }
   /// @brief 关灯
-  void close() { sendNotify(STATE_BRIGHT, 0, 0, 0, 0); }
+  void close()
+  {
+    if (!edge)
+      sendNotify(STATE_BRIGHT, 0, 0, 0, 0);
+    else
+      sendNotify(STATE_BRIGHT, 255, 0, 0, 0);
+  }
+
   /// @brief 设定亮度 0~255
   void setBrightness(uint8_t brightness) { sendNotify(STATE_BRIGHT, brightness, 0, 0, 0); }
 
