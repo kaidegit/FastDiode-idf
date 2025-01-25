@@ -6,18 +6,21 @@ FastDiode 是一个为 ESP32 系列芯片设计的 LED 控制库，提供简单�
 
 ## 特性
 
+- 支持两种控制模式:
+  - LEDC PWM 控制模式
+  - 普通 GPIO (analogWrite) 控制模式
 - 支持多个 LED 同时控制
 - 自动管理 PWM 通道资源
 - 丰富的灯效：
   - 开关控制
   - 亮度调节（0-255）
-  - 闪烁效果（可设置次数）
+  - 闪烁效果（可设置次数和恢复，当次数为 0 时，会一直闪烁，当设定指定次数后，会恢复到之前的状态）
   - 渐亮/渐暗效果
   - 呼吸灯效果
 - 基于 FreeRTOS 任务的非阻塞控制
-- 支持不同芯片的 PWM 通道数限制
-- 自动错误处理和状态报告
-- 支持高低电平触发
+- 支持高低电平触发（ACTIVE_HIGH/ACTIVE_LOW）
+- 支持状态保存和恢复
+- 错误处理和状态报告功能
 
 ## 实现原理
 
@@ -101,7 +104,7 @@ graph LR
 
    ```ini
    lib_deps =
-       https://github.com/your-username/FastDiode.git
+       https://github.com/chiyoooo/FastDiode.git
    ```
 
 2. 手动安装
@@ -110,41 +113,52 @@ graph LR
 
 ## 快速开始
 
+### 基础示例
+
 ```cpp
 #include <Arduino.h>
 #include "FastDiode.h"
 
-// 创建 LED 对象
-// 参数: GPIO引脚, 触发电平(false=低电平触发), LED名称
-FastDiode led(12, false, "myLED");
+// 使用 LEDC PWM 方式
+FastDiode led1(13, 5000, CHANNEL_0, ACTIVE_LOW, "LED1");
+
+// 使用普通 GPIO 方式
+FastDiode led2(12, ACTIVE_LOW, "LED2");
 
 void setup() {
-    // 无需其他初始化
+    Serial.begin(115200);
+
+    // LEDC 模式需要调用 begin()
+    led1.begin();
+
+    // 设置呼吸灯效果
+    led1.breathing(500);
 }
 
 void loop() {
-    led.open();               // 打开 LED
-    delay(1000);
+    if(/* 某个条件 */) {
+        // 基础控制
+        led2.open();                    // 打开 LED
+        delay(1000);
 
-    led.setBrightness(122);   // 设置亮度为约50%
-    delay(1000);
+        led2.setBrightness(122);        // 设置亮度 (0-255)
+        delay(1000);
 
-    led.flickering(500);      // 持续闪烁，间隔500ms
-    delay(2000);
+        led2.flickering(500);           // 闪烁效果，间隔 500ms
+        delay(2000);
 
-    led.flickering(500, 2);   // 闪烁2次后恢复之前状态
-    delay(2000);
+        led2.fodeOn(2000);             // 2秒内渐亮
+        delay(2000);
 
-    led.fodeOn(2000);         // 2秒内渐亮到最大亮度
-    delay(2000);
+        led2.fodeOff(2000);            // 2秒内渐暗
+        delay(2000);
 
-    led.fodeOff(2000);        // 2秒内渐暗到熄灭
-    delay(2000);
+        led2.breathing(500);            // 呼吸灯效果
+        delay(2000);
 
-    led.breathing(500);       // 呼吸灯效果，周期500ms
-    delay(3000);
-
-    led.close();              // 关闭 LED
+        // 闪烁2次后恢复之前状态
+        led2.flickering(500, 2);
+    }
 }
 ```
 
@@ -152,119 +166,90 @@ void loop() {
 
 ### 构造函数
 
+1. LEDC PWM 模式:
+
 ```cpp
-FastDiode(uint8_t _pin, bool _edge = false, String _name = " ")
+FastDiode(uint8_t pin, uint32_t freq, ELEDChannel channel = CHANNEL_AUTO,
+         bool reverse = false, String name = "")
 ```
 
-- `_pin`: LED 连接的 GPIO 引脚
-- `_edge`: 触发电平，false=低电平触发，true=高电平触发
-- `_name`: LED 名称（可选）
+2. 普通 GPIO 模式:
 
-### 基本控制
+```cpp
+FastDiode(uint8_t pin, bool reverse = false, String name = "")
+```
 
+参数说明:
+
+- `pin`: LED 连接的 GPIO 引脚
+- `freq`: PWM 频率 (仅 LEDC 模式)
+- `channel`: LEDC 通道 (仅 LEDC 模式)
+- `reverse`: 触发电平 (true = ACTIVE_LOW, false = ACTIVE_HIGH)
+- `name`: LED 标识名称
+
+### 基本控制函数
+
+- `begin()` - 初始化 LED (LEDC 模式必需)
 - `open()` - 打开 LED
 - `close()` - 关闭 LED
-- `setBrightness(value)` - 设置亮度，value 范围 0-255
+- `setBrightness(uint8_t brightness)` - 设置亮度 (0-255)
 
-### 特效控制
+### 特效控制函数
 
-- `flickering(time, count = MAX_COUNT, brightness = 255)`
+- `flickering(uint32_t time, uint32_t count = MAX_COUNT, uint8_t brightness = 255)`
 
   - 闪烁效果
-  - time: 闪烁间隔(ms)
-  - count: 闪烁次数，默认持续闪烁
-  - brightness: 闪烁亮度，默认最大
+  - 完成指定次数后会恢复到之前的状态
 
-- `fodeOn(time, brightness = 255)`
+- `fodeOn(uint32_t time, uint8_t brightness = 255)`
 
   - 渐亮效果
-  - time: 渐变时间(ms)
-  - brightness: 目标亮度，默认最大
+  - time: 渐变总时间(ms)
 
-- `fodeOff(time, brightness = 255)`
+- `fodeOff(uint32_t time, uint8_t brightness = 255)`
 
   - 渐暗效果
-  - time: 渐变时间(ms)
-  - brightness: 起始亮度，默认最大
+  - time: 渐变总时间(ms)
 
-- `breathing(time, brightness = 255)`
+- `breathing(uint32_t time, uint8_t brightness = 255)`
   - 呼吸灯效果
   - time: 呼吸周期(ms)
-  - brightness: 最大亮度，默认最大
+
+### 错误处理
+
+```cpp
+bool hasError();              // 检查是否有错误
+String getLastError();        // 获取最后的错误信息
+void clearError();           // 清除错误状态
+```
+
+## 通道限制
+
+不同 ESP32 芯片支持的 LEDC 通道数:
+
+- ESP32: 16 通道 (0-15)
+- ESP32-S2/S3: 8 通道 (0-7)
+- ESP32-C3: 6 通道 (0-5)
 
 ## 注意事项
 
-1. 时间参数说明
-
-   - 渐变效果的 time 参数不能小于 255ms
-   - 建议呼吸灯的 time 参数不小于 500ms 以获得较好效果
-
-2. 状态恢复
-
-   - `flickering`函数在指定次数后会恢复到之前的状态
-   - 其他效果会保持在最后的状态
-
-3. 内存使用
-   - 每个 LED 实例会创建一个 FreeRTOS 任务
-   - 任务栈大小为 2KB
-
-## 示例
-
-更多示例请参考 [examples](examples/) 目录：
-
-- [基础控制](examples/diode_example/diode_example.cpp)
+1. LEDC 模式必须调用 `begin()` 进行初始化
+2. 渐变效果的最小时间为 255ms
+3. 使用 CHANNEL_AUTO 时会自动分配通道
+4. 每个 LED 实例会创建一个 FreeRTOS 任务
+5. 当指定闪缩次数，那么闪烁完成后会恢复到之前的状态。更适合指示灯的应用场合
+6. 当指定闪烁次数为 MAX_COUNT（默认参数） 时会持续闪烁，直到调用其他控制函数改变状态；
+7. 使用 analogWrite() 时 PWM 频率固定为 1KHz，而 LEDC 模式可以自定义 PWM 频率（如设置为 5KHz），更适合需要防止频闪的调光场合
+8. 使用 LEDC 模式会自动分配 PWM 通道，当通道数超出限制时会循环使用，建议注意通道分配以避免冲突
+9. LEDC 模式可以手动指定通道，也可以使用 CHANNEL_AUTO 自动分配；普通 GPIO 模式（analogWrite）会自动分配通道。建议在同一个项目中统一使用一种模式，避免通道冲突。
 
 ## 许可证
 
 MIT License
 
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
 ## 作者
 
-[CHIYoooo](<https://gitee.com/chiyoooo)>)
-
-## 进阶用法
-
-### 组合效果
-
-```cpp
-// 实现交替闪烁
-void alternateFlash(FastDiode& led1, FastDiode& led2, uint32_t time) {
-    led1.flickering(time * 2, MAX_COUNT, 255);
-    delay(time);
-    led2.flickering(time * 2, MAX_COUNT, 255);
-}
-
-// 实现波浪效果
-void waveEffect(FastDiode leds[], int count, uint32_t delay_time) {
-    for(int i = 0; i < count; i++) {
-        leds[i].fadeOn(500);
-        delay(delay_time);
-    }
-}
-```
-
-### 自定义效果
-
-```cpp
-// 创建随机闪烁效果
-void randomFlicker(FastDiode& led) {
-    uint8_t brightness = random(50, 255);
-    uint32_t duration = random(100, 1000);
-    led.flickering(duration, 1, brightness);
-}
-
-// 创建渐变色效果
-void gradientEffect(FastDiode& led, uint32_t time) {
-    for(uint8_t i = 0; i < 255; i++) {
-        led.setBrightness(i);
-        delay(time/255);
-    }
-}
-```
+[CHIYoooo](https://gitee.com/chiyoooo)
 
 ## 性能优化
 
@@ -303,32 +288,6 @@ StackType_t xStack[SHARED_STACK_SIZE];
 ```cpp
 // 启用调试输出
 #define FAST_DIODE_DEBUG 1
-
-// 日志级别
-typedef enum {
-    LOG_NONE = 0,
-    LOG_ERROR,
-    LOG_WARN,
-    LOG_INFO,
-    LOG_DEBUG
-} log_level_t;
-
-// 使用示例
-#if FAST_DIODE_DEBUG
-    log_i("PWM Channel: %d", pwmChannel);
-    log_w("Memory Low: %d bytes", ESP.getFreeHeap());
-#endif
-```
-
-### 性能监控
-
-```cpp
-// 监控CPU使用率
-void printStats() {
-    Serial.printf("CPU Usage: %.2f%%\n", 100.0f * (1.0f - xPortGetCPUUsage()));
-    Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("LED Count: %d\n", FastDiode::getInstanceCount());
-}
 ```
 
 ## 兼容性说明
@@ -341,13 +300,6 @@ void printStats() {
   - ESP32-S2 ✓
   - ESP32-C3 ✓
   - ESP32-S3 ✓
-
-### 软件兼容性
-
-- Arduino IDE 1.8.x ✓
-- Arduino IDE 2.x ✓
-- PlatformIO ✓
-- ESP-IDF v4.x ✓
 
 ### 依赖项
 
