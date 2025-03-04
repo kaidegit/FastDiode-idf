@@ -3,3 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+examples/basic_example_idf/build
+examples/basic_example_idf/.idea
+examples/basic_example_idf/cmake-build-debug-esp

@@ -1,32 +1,28 @@
 #pragma once
+
+#ifdef ARDUINO
 #include <Arduino.h>
+#include "hal/ledc_types.h"
+#else
+#include <cstdint>
+#include "string"
+#include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+const auto LEDC_TIMER = LEDC_TIMER_0;
+const auto LEDC_MODE = LEDC_LOW_SPEED_MODE;
+
+using String = std::string;
+#endif
 
 #define push(x) saveLED = x
 #define pull(x) x = saveLED
 #define MAX_COUNT 0xffffffff / 2
 
 // LED通道枚举，用于LEDC控制
-enum ELEDChannel
-{
-  CHANNEL_0 = 0,
-  CHANNEL_1 = 1,
-  CHANNEL_2 = 2,
-  CHANNEL_3 = 3,
-  CHANNEL_4 = 4,
-  CHANNEL_5 = 5,
-  CHANNEL_6 = 6,
-  CHANNEL_7 = 7,
-#if defined(CONFIG_IDF_TARGET_ESP32)
-  CHANNEL_8 = 8, // ESP32支持更多通道
-  CHANNEL_9 = 9,
-  CHANNEL_10 = 10,
-  CHANNEL_11 = 11,
-  CHANNEL_12 = 12,
-  CHANNEL_13 = 13,
-  CHANNEL_14 = 14,
-  CHANNEL_15 = 15,
-#endif
-};
+using ELEDChannel = ledc_channel_t;
 
 // LED极性枚举
 enum class EPinPolarity
@@ -69,7 +65,7 @@ class FastDiode
 {
 private:
   uint8_t pin;                                  // 引脚
-  uint8_t channel;                              // 通道
+  ELEDChannel channel;                          // 通道
   TaskHandle_t taskHandle = NULL;               // 任务句柄
   LEDState notifyLED;                           // 用于发送状态的缓存
   LEDState saveLED;                             // 用于存储 前一个状态的缓存
@@ -91,12 +87,27 @@ private:
   static void startTaskImpl(void *_this) { static_cast<FastDiode *>(_this)->task(); }
 
   // 设置亮度 ,在这边判断initialized，如果initialized为true，则使用LEDC，否则使用analogWrite
+  // arduino里应该都是ledc实现
+  // idf中如果未使用ledc初始化，只实现高低电平。
   void setBrightnessImpl(uint8_t brightness)
   {
+#ifdef ARDUINO
     if (initialized)
       ledcWrite(channel, brightness);
     else
       analogWrite(pin, brightness);
+#else
+    if (initialized) {
+        ledc_set_duty(LEDC_MODE, channel, brightness);
+        ledc_update_duty(LEDC_MODE, channel);
+    } else {
+        if (brightness) {
+            gpio_set_level(static_cast<gpio_num_t>(pin), 1);
+        } else {
+            gpio_set_level(static_cast<gpio_num_t>(pin), 0);
+        }
+    }
+#endif
   }
 
 public:
@@ -105,7 +116,18 @@ public:
     pin = _pin;
     edge = _edge;
     name = _name;
+#ifdef ARDUINO
     pinMode(pin, OUTPUT);
+#else
+      const gpio_config_t config = {
+          .pin_bit_mask = static_cast<uint64_t>(1 << pin),
+          .mode = GPIO_MODE_OUTPUT,
+          .pull_up_en = GPIO_PULLUP_DISABLE,
+          .pull_down_en = GPIO_PULLDOWN_DISABLE,
+          .intr_type = GPIO_INTR_DISABLE
+      };
+      ESP_ERROR_CHECK(gpio_config(&config));
+#endif
     xTaskCreate(this->startTaskImpl, _name.c_str(), 1024 * 2, this, 1, &taskHandle);
     sendNotify(EEffectType::STATIC, 0, 0, 0, 0);
   }
@@ -118,8 +140,37 @@ public:
   {
     initialized = true;
     channel = _channel;
+#ifdef ARDUINO
     ledcSetup(channel, freq, resolution);
     ledcAttachPin(pin, channel);
+#else
+      // Prepare and then apply the LEDC PWM timer configuration
+      ledc_timer_config_t ledc_timer = {
+          .speed_mode       = LEDC_MODE,
+          .duty_resolution  = static_cast<ledc_timer_bit_t>(resolution),
+          .timer_num        = LEDC_TIMER,
+          .freq_hz          = freq,
+          .clk_cfg          = LEDC_AUTO_CLK,
+          .deconfigure      = false
+      };
+      ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+      // Prepare and then apply the LEDC PWM channel configuration
+      ledc_channel_config_t ledc_channel = {
+          .gpio_num       = pin,
+          .speed_mode     = LEDC_MODE,
+          .channel        = channel,
+          .intr_type      = LEDC_INTR_DISABLE,
+          .timer_sel      = LEDC_TIMER,
+          .duty           = 0,
+          .hpoint         = 0,
+          .sleep_mode     = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+          .flags = {
+              .output_invert = 0
+          }
+      };
+      ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+#endif
   }
 
   /// @brief 开灯
