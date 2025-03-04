@@ -4,6 +4,8 @@
 
 FastDiode 是一个为 ESP32 系列芯片设计的 LED 控制库，提供简单易用的 API 来实现 LED 的各种效果控制。支持 ESP32、ESP32-S2、ESP32-S3、ESP32-C3 等系列芯片。
 
+本仓库为https://gitee.com/chiyoooo/fast-diode的fork版本，支持了esp-idf
+
 ## 特性
 
 - 支持两种控制模式:
